@@ -243,13 +243,15 @@ func convolveLine(dstBuf []pixel, srcBuf []pixel, weights []uweight) {
 			} else if k > max {
 				k = max
 			}
-			c := srcBuf[k]
+			// Filter in premultiplied-alpha space so that fully transparent
+			// source pixels contribute no color to their visible neighbors.
+			c := srcBuf[k].premultiply()
 			r += c.R * w.weight
 			g += c.G * w.weight
 			b += c.B * w.weight
 			a += c.A * w.weight
 		}
-		dstBuf[dstu] = pixel{r, g, b, a}
+		dstBuf[dstu] = pixel{r, g, b, a}.unpremultiply()
 	}
 }
 
@@ -415,15 +417,18 @@ func (p *unsharpMaskFilter) Draw(dst draw.Image, src image.Image, options *Optio
 	parallelize(options.Parallelization, srcb.Min.Y, srcb.Max.Y, func(pmin, pmax int) {
 		for y := pmin; y < pmax; y++ {
 			for x := srcb.Min.X; x < srcb.Max.X; x++ {
-				pxOrig := pixGetterOrig.getPixel(x, y)
-				pxBlur := pixGetterBlur.getPixel(x, y)
+				// Work in premultiplied-alpha space: sharpening the straight
+				// color channels independently would let the hidden color of
+				// fully transparent pixels leak into their visible neighbors.
+				pxOrig := pixGetterOrig.getPixel(x, y).premultiply()
+				pxBlur := pixGetterBlur.getPixel(x, y).premultiply()
 
 				r := unsharp(pxOrig.R, pxBlur.R, p.amount, p.thresold)
 				g := unsharp(pxOrig.G, pxBlur.G, p.amount, p.thresold)
 				b := unsharp(pxOrig.B, pxBlur.B, p.amount, p.thresold)
 				a := unsharp(pxOrig.A, pxBlur.A, p.amount, p.thresold)
 
-				pixelSetter.setPixel(dstb.Min.X+x-srcb.Min.X, dstb.Min.Y+y-srcb.Min.Y, pixel{r, g, b, a})
+				pixelSetter.setPixel(dstb.Min.X+x-srcb.Min.X, dstb.Min.Y+y-srcb.Min.Y, pixel{r, g, b, a}.unpremultiply())
 			}
 		}
 	})

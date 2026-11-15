@@ -10,6 +10,43 @@ type pixel struct {
 	R, G, B, A float32
 }
 
+// premultiply converts a straight (non-premultiplied) alpha pixel into
+// premultiplied-alpha form. Color channels of fully transparent pixels are
+// multiplied by zero, so the hidden color of such a pixel cannot contribute
+// to (and therefore pollute) the visible neighbors during linear filtering.
+func (px pixel) premultiply() pixel {
+	return pixel{px.R * px.A, px.G * px.A, px.B * px.A, px.A}
+}
+
+// unpremultiply converts a premultiplied-alpha pixel back to straight alpha
+// form. When the resulting alpha is (close to) zero the color channels are
+// set to zero instead of dividing by the near-zero alpha.
+func (px pixel) unpremultiply() pixel {
+	if px.A <= 0.0 {
+		return pixel{0.0, 0.0, 0.0, 0.0}
+	}
+	ia := 1.0 / px.A
+	r := px.R * ia
+	g := px.G * ia
+	b := px.B * ia
+	if r < 0.0 {
+		r = 0.0
+	} else if r > 1.0 {
+		r = 1.0
+	}
+	if g < 0.0 {
+		g = 0.0
+	} else if g > 1.0 {
+		g = 1.0
+	}
+	if b < 0.0 {
+		b = 0.0
+	} else if b > 1.0 {
+		b = 1.0
+	}
+	return pixel{r, g, b, px.A}
+}
+
 type imageType int
 
 const (

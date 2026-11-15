@@ -107,13 +107,15 @@ func resizeLine(dstBuf []pixel, srcBuf []pixel, weights [][]uweight) {
 	for dstu := 0; dstu < len(weights); dstu++ {
 		var r, g, b, a float32
 		for _, iw := range weights[dstu] {
-			c := srcBuf[iw.u]
+			// Filter in premultiplied-alpha space so that fully transparent
+			// source pixels contribute no color, only their (zero) alpha.
+			c := srcBuf[iw.u].premultiply()
 			r += c.R * iw.weight
 			g += c.G * iw.weight
 			b += c.B * iw.weight
 			a += c.A * iw.weight
 		}
-		dstBuf[dstu] = pixel{r, g, b, a}
+		dstBuf[dstu] = pixel{r, g, b, a}.unpremultiply()
 	}
 }
 

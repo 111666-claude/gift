@@ -259,14 +259,18 @@ func (p *rotateFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 					cfs[14] = -(1.0 / 12.0) * xq * yq * (xq + 1) * (xq - 2) * (yq - 1) * (yq + 1)
 					cfs[15] = (1.0 / 36.0) * xq * yq * (xq - 1) * (xq + 1) * (yq - 1) * (yq + 1)
 
+					// Accumulate in premultiplied-alpha space so that the
+					// hidden color of transparent samples cannot bleed into
+					// visible pixels along the rotated edges.
 					for i := range pxs {
-						px.R += pxs[i].R * cfs[i]
-						px.G += pxs[i].G * cfs[i]
-						px.B += pxs[i].B * cfs[i]
-						px.A += pxs[i].A * cfs[i]
+						p := pxs[i].premultiply()
+						px.R += p.R * cfs[i]
+						px.G += p.G * cfs[i]
+						px.B += p.B * cfs[i]
+						px.A += p.A * cfs[i]
 					}
 
-					pixSetter.setPixel(dstb.Min.X+x, dstb.Min.Y+y, px)
+					pixSetter.setPixel(dstb.Min.X+x, dstb.Min.Y+y, px.unpremultiply())
 
 				case LinearInterpolation:
 					var calc bool
@@ -299,14 +303,18 @@ func (p *rotateFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 					cfs[2] = (1 - xq) * yq
 					cfs[3] = xq * yq
 
+					// Accumulate in premultiplied-alpha space so that the
+					// hidden color of transparent samples cannot bleed into
+					// visible pixels along the rotated edges.
 					for i := range pxs {
-						px.R += pxs[i].R * cfs[i]
-						px.G += pxs[i].G * cfs[i]
-						px.B += pxs[i].B * cfs[i]
-						px.A += pxs[i].A * cfs[i]
+						p := pxs[i].premultiply()
+						px.R += p.R * cfs[i]
+						px.G += p.G * cfs[i]
+						px.B += p.B * cfs[i]
+						px.A += p.A * cfs[i]
 					}
 
-					pixSetter.setPixel(dstb.Min.X+x, dstb.Min.Y+y, px)
+					pixSetter.setPixel(dstb.Min.X+x, dstb.Min.Y+y, px.unpremultiply())
 
 				default:
 					var px pixel
