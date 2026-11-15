@@ -192,6 +192,150 @@ func (g *GIFT) DrawAt(dst draw.Image, src image.Image, pt image.Point, op Operat
 	}
 }
 
+// DrawAtMasked applies all the added filters to the src image and blends the result
+// into the dst image at the position pt, modulating the strength of the blend
+// per-pixel with the mask image. The op operator selects the composition semantics
+// (CopyOperator or OverOperator).
+//
+// The mask is aligned with the output of the filter chain, not with the source
+// image: its upper-left corner is placed at pt and it shares the destination
+// coordinate space of the result. This keeps the mask aligned with pt even when
+// the filters change the output bounds, for example when resizing or rotating.
+// A mask pixel outside the mask bounds is treated as fully transparent. Pixels
+// outside the dst bounds are clipped.
+//
+// The mask alpha controls the coverage of the filtered result (px1) over the
+// existing destination pixel (px0):
+//   - mask alpha 0.0 leaves the destination pixel untouched;
+//   - mask alpha 1.0 fully replaces (CopyOperator) or fully composites
+//     (OverOperator) the destination pixel with the filtered result;
+//   - any intermediate value m blends the two proportionally.
+//
+// For CopyOperator the blend is the straight interpolation
+// px = px0*(1-m) + px1*m. For OverOperator the source coverage is first scaled
+// by the mask and then composited with the standard Porter-Duff source-over
+// rule. With a fully opaque mask the result is identical to DrawAt.
+//
+// If mask is nil, the call is equivalent to DrawAt with the same operator.
+// The src and mask images are only read, never modified.
+func (g *GIFT) DrawAtMasked(dst draw.Image, src image.Image, mask image.Image, pt image.Point, op Operator) {
+	if mask == nil {
+		g.DrawAt(dst, src, pt, op)
+		return
+	}
+
+	// tb is the output rectangle of the filter chain in the destination
+	// coordinate space; mb is the mask rectangle placed with its Min at pt.
+	tb := g.Bounds(src.Bounds())
+	tb = tb.Sub(tb.Min).Add(pt)
+	mb := mask.Bounds().Sub(mask.Bounds().Min).Add(pt)
+
+	tmp := createTempImage(tb)
+	g.Draw(tmp, src)
+
+	pixGetterDst := newPixelGetter(dst)
+	pixGetterTmp := newPixelGetter(tmp)
+	pixSetterDst := newPixelSetter(dst)
+
+	// Only pixels covered by all three images can be blended. Areas outside
+	// the mask are treated as transparent and areas outside dst are clipped.
+	ib := tb.Intersect(dst.Bounds()).Intersect(mb)
+	if ib.Empty() {
+		return
+	}
+
+	parallelize(g.Options.Parallelization, ib.Min.Y, ib.Max.Y, func(start, stop int) {
+		for y := start; y < stop; y++ {
+			for x := ib.Min.X; x < ib.Max.X; x++ {
+				// Mask coordinates share the destination space: the mask Min
+				// maps onto pt regardless of the mask's own origin.
+				m := maskAlpha(mask, x-pt.X+mask.Bounds().Min.X, y-pt.Y+mask.Bounds().Min.Y)
+				if m <= 0 {
+					continue
+				}
+
+				px0 := pixGetterDst.getPixel(x, y)
+				px1 := pixGetterTmp.getPixel(x, y)
+
+				if op == OverOperator && m >= 1 {
+					// Keep the exact OverOperator arithmetic of DrawAt for a
+					// fully opaque mask so the two entry points agree bit for bit.
+					c1 := px1.a
+					c0 := (1 - c1) * px0.a
+					cs := c0 + c1
+					c0 /= cs
+					c1 /= cs
+					r := px0.r*c0 + px1.r*c1
+					gg := px0.g*c0 + px1.g*c1
+					b := px0.b*c0 + px1.b*c1
+					a := px0.a + px1.a*(1-px0.a)
+					pixSetterDst.setPixel(x, y, pixel{r, gg, b, a})
+					continue
+				}
+
+				om := 1 - m
+				var r, gg, b, a float32
+				if op == OverOperator {
+					// Masked source-over: scale the source coverage by the mask
+					// and apply the standard Porter-Duff source-over rule.
+					// m == 0 reproduces px0, m == 1 matches the DrawAt math.
+					sa := px1.a * m
+					a = px0.a + sa*(1-px0.a)
+					if a > 0 {
+						w1 := sa / a
+						w0 := px0.a * (1 - sa) / a
+						r = px1.r*w1 + px0.r*w0
+						gg = px1.g*w1 + px0.g*w0
+						b = px1.b*w1 + px0.b*w0
+					}
+				} else {
+					// Straight interpolation of the straight-alpha pixels.
+					r = px0.r*om + px1.r*m
+					gg = px0.g*om + px1.g*m
+					b = px0.b*om + px1.b*m
+					a = px0.a*om + px1.a*m
+				}
+				pixSetterDst.setPixel(x, y, pixel{r, gg, b, a})
+			}
+		}
+	})
+}
+
+// maskAlpha returns the normalized alpha of a mask pixel in the [0.0, 1.0]
+// range. For alpha-enabled image types the alpha channel is used; for opaque
+// grayscale images the gray value itself is the coverage.
+func maskAlpha(mask image.Image, x, y int) float32 {
+	switch mask := mask.(type) {
+	case *image.Alpha:
+		i := mask.PixOffset(x, y)
+		return float32(mask.Pix[i]) * qf8
+	case *image.Alpha16:
+		i := mask.PixOffset(x, y)
+		return float32(uint16(mask.Pix[i+0])<<8|uint16(mask.Pix[i+1])) * qf16
+	case *image.Gray:
+		i := mask.PixOffset(x, y)
+		return float32(mask.Pix[i]) * qf8
+	case *image.Gray16:
+		i := mask.PixOffset(x, y)
+		return float32(uint16(mask.Pix[i+0])<<8|uint16(mask.Pix[i+1])) * qf16
+	case *image.NRGBA:
+		i := mask.PixOffset(x, y)
+		return float32(mask.Pix[i+3]) * qf8
+	case *image.NRGBA64:
+		i := mask.PixOffset(x, y)
+		return float32(uint16(mask.Pix[i+6])<<8|uint16(mask.Pix[i+7])) * qf16
+	case *image.RGBA:
+		i := mask.PixOffset(x, y)
+		return float32(mask.Pix[i+3]) * qf8
+	case *image.RGBA64:
+		i := mask.PixOffset(x, y)
+		return float32(uint16(mask.Pix[i+6])<<8|uint16(mask.Pix[i+7])) * qf16
+	default:
+		_, _, _, a := mask.At(x, y).RGBA()
+		return float32(a) * qf16
+	}
+}
+
 func getSubImage(img draw.Image, pt image.Point) (draw.Image, bool) {
 	if !pt.In(img.Bounds()) {
 		return nil, false

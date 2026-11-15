@@ -70,6 +70,11 @@ g.Draw(dst, src)
 g.DrawAt(dst, src, dst.Bounds().Min, gift.CopyOperator)
 ```
 
+- `DrawAtMasked` works like `DrawAt` but takes an additional mask image that controls the blend strength per pixel. The mask is aligned with the filter output at the specified position, so it stays aligned even when the filters resize or rotate the image. A mask alpha of 0 keeps the original dst pixel, 1 fully applies the filtered result, and intermediate values blend the two proportionally. A nil mask is equivalent to `DrawAt`.
+```go
+g.DrawAtMasked(dst, src, mask, image.Pt(10, 10), gift.OverOperator)
+```
+
 Two image composition operators are supported by now:
 - `CopyOperator` - Replaces pixels of the dst image with pixels of the filtered src image. This mode is used by the Draw method.
 - `OverOperator` - Places the filtered src image on top of the dst image. This mode makes sence if the filtered src image has transparent areas.
