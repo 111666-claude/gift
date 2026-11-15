@@ -84,6 +84,22 @@ gift.New().Draw(dstImage, bgImage)
 gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
 ```
 
+3D LUTs (`.cube` files) exported from color grading tools can be applied with the `ColorLUT` filter:
+```go
+// Load the LUT once and reuse it for any number of images.
+lut, err := gift.LoadLUT3D("look.cube")
+if err != nil {
+	log.Fatal(err)
+}
+g := gift.New(
+	gift.Resize(800, 0, gift.LanczosResampling),
+	gift.ColorLUT(lut),
+)
+dst := image.NewRGBA(g.Bounds(src.Bounds()))
+g.Draw(dst, src)
+```
+`LoadLUT3D` reads a file and `ParseLUT3D` reads any `io.Reader`. `LUT_3D_SIZE`, `DOMAIN_MIN`, `DOMAIN_MAX`, and `TITLE` are recognized, `#` starts a comment, and malformed files return an error. Colors are interpolated trilinearly inside the declared domain, clamped to its edges outside of it, and the alpha channel is preserved.
+
 
 ### SUPPORTED FILTERS
 
@@ -109,6 +125,7 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
     - ColorBalance(percentageRed, percentageGreen, percentageBlue float32)
     - ColorFunc(fn func(r0, g0, b0, a0 float32) (r, g, b, a float32))
     - Colorize(hue, saturation, percentage float32)
+    - ColorLUT(lut *LUT3D)
     - ColorspaceLinearToSRGB()
     - ColorspaceSRGBToLinear()
     - Contrast(percentage float32)

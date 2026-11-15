@@ -1,0 +1,14 @@
+# Inverting 3D LUT used by the gift tests.
+TITLE "Invert"
+LUT_3D_SIZE 2
+DOMAIN_MIN 0.0 0.0 0.0
+DOMAIN_MAX 1.0 1.0 1.0
+
+1.0 1.0 1.0
+0.0 1.0 1.0
+1.0 0.0 1.0
+0.0 0.0 1.0
+1.0 1.0 0.0
+0.0 1.0 0.0
+1.0 0.0 0.0
+0.0 0.0 0.0
