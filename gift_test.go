@@ -486,6 +486,7 @@ func TestDraw(t *testing.T) {
 		{Median(3, true)},
 		{Pixelate(3)},
 		{Saturation(10)},
+		{SeamlessTile(4, 4, 1)},
 		{Sepia(10)},
 		{Sigmoid(0.5, 5)},
 		{Sobel()},
