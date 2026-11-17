@@ -106,6 +106,7 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
 + Adjustments & effects
 
     - Brightness(percentage float32)
+    - CLAHE(gridSize int, clipLimit float32)
     - ColorBalance(percentageRed, percentageGreen, percentageBlue float32)
     - ColorFunc(fn func(r0, g0, b0, a0 float32) (r, g, b, a float32))
     - Colorize(hue, saturation, percentage float32)
