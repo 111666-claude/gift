@@ -85,6 +85,22 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
 ```
 
 
+Shadows and highlights can be adjusted with a tone curve defined by normalized control points:
+```go
+g := gift.New(
+	// Lift the gray shadows and recover the blown highlights of a negative.
+	gift.Curve(
+		gift.CurvePoint{X: 0.00, Y: 0.08},
+		gift.CurvePoint{X: 0.50, Y: 0.50},
+		gift.CurvePoint{X: 1.00, Y: 0.92},
+	),
+)
+dst := image.NewRGBA(g.Bounds(src.Bounds()))
+g.Draw(dst, src)
+```
+The control points are connected with a shape-preserving monotone cubic interpolation: the curve passes through every point and never overshoots between them, so a monotone set of points produces a monotone curve. The curve maps the luminance of a pixel and the RGB channels are scaled by the resulting luminance ratio, so the alpha channel is preserved and no obvious color shift is introduced. Control points may be given in any order; duplicates are collapsed (the last one wins), non-finite points are ignored, coordinates are clamped to `[0, 1]`, and missing `(0, 0)`/`(1, 1)` endpoints are added automatically. A curve whose points all lie on `y = x` is the identity and leaves the image unchanged. The curve can be previewed by applying the filter to a horizontal gray gradient.
+
+
 ### SUPPORTED FILTERS
 
 + Transformations
@@ -113,6 +129,7 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
     - ColorspaceSRGBToLinear()
     - Contrast(percentage float32)
     - Convolution(kernel []float32, normalize, alpha, abs bool, delta float32)
+    - Curve(points ...CurvePoint)
     - Gamma(gamma float32)
     - GaussianBlur(sigma float32)
     - Grayscale()
@@ -155,6 +172,8 @@ mean                                        | median                            
 ![](testdata/dst_mean.png)                  | ![](testdata/dst_median.png)               | ![](testdata/dst_minimum.png)              | ![](testdata/dst_maximum.png)
 hue_rotate                                  | color_balance                              | color_func                                 | convolution_emboss
 ![](testdata/dst_hue_rotate.png)            | ![](testdata/dst_color_balance.png)        | ![](testdata/dst_color_func.png)           | ![](testdata/dst_convolution_emboss.png)
+curve                                       |                                            |                                            |
+![](testdata/dst_curve.png)                 |                                            |                                            |
 
 Here's the code that produces the above images:
 
@@ -183,6 +202,12 @@ func main() {
 		"brightness_decrease":  gift.Brightness(-30),
 		"contrast_increase":    gift.Contrast(30),
 		"contrast_decrease":    gift.Contrast(-30),
+		"curve": gift.Curve(
+			gift.CurvePoint{X: 0.00, Y: 0.08},
+			gift.CurvePoint{X: 0.25, Y: 0.30},
+			gift.CurvePoint{X: 0.75, Y: 0.72},
+			gift.CurvePoint{X: 1.00, Y: 0.94},
+		),
 		"saturation_increase":  gift.Saturation(50),
 		"saturation_decrease":  gift.Saturation(-50),
 		"gamma_1.5":            gift.Gamma(1.5),
