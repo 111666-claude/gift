@@ -129,6 +129,7 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
     - Sobel()
     - Threshold(percentage float32)
     - UnsharpMask(sigma, amount, threshold float32)
+    - WaveletDenoise(levels int, threshold float32)
 
 
 ### FILTER EXAMPLES
