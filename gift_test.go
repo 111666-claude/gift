@@ -489,6 +489,7 @@ func TestDraw(t *testing.T) {
 		{Sepia(10)},
 		{Sigmoid(0.5, 5)},
 		{Sobel()},
+		{RollingBall(2)},
 		{UnsharpMask(1, 1.5, 0.001)},
 	}
 
@@ -563,6 +564,7 @@ func TestGolden(t *testing.T) {
 		"median":              Median(5, true),
 		"minimum":             Minimum(5, true),
 		"maximum":             Maximum(5, true),
+		"rolling_ball":        RollingBall(20),
 		"hue_rotate":          Hue(45),
 		"color_balance":       ColorBalance(10, -10, -10),
 		"color_func": ColorFunc(
@@ -691,6 +693,7 @@ func BenchmarkFilter(b *testing.B) {
 			false, false, false, 0,
 		)},
 		{"Sobel", Sobel()},
+		{"RollingBall", RollingBall(20)},
 	}
 	for _, f := range filters {
 		b.Run(f.name, func(b *testing.B) {
