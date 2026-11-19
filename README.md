@@ -85,6 +85,19 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
 ```
 
 
+A photo shot under a colored light can be corrected to a target white point with `WhiteBalance`. The source white is the color of a neutral object in the photo (a gray card or the illuminant itself), the target white is the white point the neutral colors should have in the result:
+```go
+g := gift.New(
+	// The white card of the chart turned yellow under a warm lamp; correct it
+	// to the sRGB (D65) white point.
+	gift.WhiteBalance(color.NRGBA{255, 214, 170, 255}, color.White),
+)
+dst := image.NewRGBA(g.Bounds(src.Bounds()))
+g.Draw(dst, src)
+```
+The adaptation uses the Bradford chromatic adaptation model and is performed in linear light, so the source reference white lands exactly on the target white point and other colors keep their relative appearance (a plain per-channel gain would satisfy the neutral patches but distort the rest). The alpha channel is preserved. A reference white that is black, too dark (relative luminance below 0.001), transparent, non-finite, or outside the sRGB gamut cannot define an adaptation; in that case, and when both white points are equal, the filter is a pass-through copy. Out-of-gamut results are clamped to sRGB. Invalid channel values can be passed with `WhitePoint`, which unlike `color.RGBA` does not clamp them.
+
+
 ### SUPPORTED FILTERS
 
 + Transformations
@@ -129,6 +142,7 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
     - Sobel()
     - Threshold(percentage float32)
     - UnsharpMask(sigma, amount, threshold float32)
+    - WhiteBalance(srcWhite, dstWhite color.Color)
 
 
 ### FILTER EXAMPLES
@@ -155,6 +169,8 @@ mean                                        | median                            
 ![](testdata/dst_mean.png)                  | ![](testdata/dst_median.png)               | ![](testdata/dst_minimum.png)              | ![](testdata/dst_maximum.png)
 hue_rotate                                  | color_balance                              | color_func                                 | convolution_emboss
 ![](testdata/dst_hue_rotate.png)            | ![](testdata/dst_color_balance.png)        | ![](testdata/dst_color_func.png)           | ![](testdata/dst_convolution_emboss.png)
+white_balance                               |                                            |                                            |
+![](testdata/dst_white_balance.png)         |                                            |                                            |
 
 Here's the code that produces the above images:
 
@@ -201,6 +217,7 @@ func main() {
 		"maximum":              gift.Maximum(5, true),
 		"hue_rotate":           gift.Hue(45),
 		"color_balance":        gift.ColorBalance(10, -10, -10),
+		"white_balance":        gift.WhiteBalance(color.NRGBA{255, 214, 170, 255}, color.White),
 		"color_func": gift.ColorFunc(
 			func(r0, g0, b0, a0 float32) (r, g, b, a float32) {
 				r = 1 - r0   // invert the red channel

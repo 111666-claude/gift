@@ -490,6 +490,7 @@ func TestDraw(t *testing.T) {
 		{Sigmoid(0.5, 5)},
 		{Sobel()},
 		{UnsharpMask(1, 1.5, 0.001)},
+		{WhiteBalance(color.NRGBA{255, 214, 170, 255}, color.White)},
 	}
 
 	for i, f := range filters {
@@ -565,6 +566,7 @@ func TestGolden(t *testing.T) {
 		"maximum":             Maximum(5, true),
 		"hue_rotate":          Hue(45),
 		"color_balance":       ColorBalance(10, -10, -10),
+		"white_balance":       WhiteBalance(color.NRGBA{255, 214, 170, 255}, color.White),
 		"color_func": ColorFunc(
 			func(r0, g0, b0, a0 float32) (r, g, b, a float32) {
 				r = 1 - r0
@@ -663,6 +665,7 @@ func BenchmarkFilter(b *testing.B) {
 		{"Colorize", Colorize(240, 50, 100)},
 		{"ColorBalance", ColorBalance(10, -10, -10)},
 		{"Threshold", Threshold(50)},
+		{"WhiteBalance", WhiteBalance(color.NRGBA{255, 214, 170, 255}, color.White)},
 		{"Hue", Hue(45)},
 		{"Grayscale", Grayscale()},
 		{"Sepia", Sepia(100)},
