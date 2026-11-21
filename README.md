@@ -83,6 +83,48 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
 ```
 
 
+### CONNECTED COMPONENTS
+
+The `Components` function finds the connected regions of visible pixels in an
+image, which is useful for packing sprite sheets or for locating separate parts
+before cutting them out. A pixel is visible when its alpha value is greater than
+or equal to the threshold; the threshold is compared as an 8-bit alpha value
+(0-255). Pixels with zero alpha are never part of a component.
+
+```go
+// Find 8-connected regions of pixels with alpha >= 1.
+parts, err := gift.Components(src, 0, gift.Connectivity8)
+if err != nil {
+	log.Fatal(err)
+}
+for _, c := range parts {
+	fmt.Printf("part %d: bounds %v, pixels %d, centroid (%.2f, %.2f)\n",
+		c.Label, c.Bounds, c.NumPixels, c.CentroidX, c.CentroidY)
+}
+```
+
+`gift.LabelComponents` performs the same analysis and additionally returns an
+`*image.Gray16` label image. Background pixels have label 0 and each component
+has a label equal to its `Component.Label` (1 to N):
+
+```go
+labels, parts, err := gift.LabelComponents(src, 0, gift.Connectivity8)
+```
+
+Components are numbered in the order their first pixel appears in a
+top-to-bottom, left-to-right scan of the source image, which makes the result
+stable and reproducible. Bounding boxes and centroids use the source image
+coordinates, including images whose bounds do not start at (0, 0). The
+connectivity can be `gift.Connectivity4` (edge neighbors only) or
+`gift.Connectivity8` (edge and diagonal neighbors).
+
+The analysis is run-length based, so it does not allocate per pixel; large,
+sparse sprite sheets only pay for the runs they contain. Invalid arguments are
+reported as errors (`ErrInvalidAlphaThreshold`, `ErrInvalidConnectivity`,
+`ErrNilImage`), and `LabelComponents` returns `ErrTooManyComponents` when the
+labels do not fit in an `image.Gray16` (more than 65535 components).
+
+
 ### SUPPORTED FILTERS
 
 + Transformations

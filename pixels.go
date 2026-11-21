@@ -278,6 +278,37 @@ func (p *pixelGetter) getPixel(x, y int) pixel {
 	return pixelFromColor(p.image.At(x, y))
 }
 
+// getAlpha16 returns the alpha channel of the pixel as a 16-bit value.
+// It is a faster and allocation-free alternative to getPixel for algorithms
+// that only need the alpha channel (such as connected component analysis).
+func (p *pixelGetter) getAlpha16(x, y int) uint16 {
+	switch p.it {
+	case itNRGBA:
+		return uint16(p.nrgba.Pix[p.nrgba.PixOffset(x, y)+3]) * 0x101
+
+	case itNRGBA64:
+		i := p.nrgba64.PixOffset(x, y)
+		return uint16(p.nrgba64.Pix[i+6])<<8 | uint16(p.nrgba64.Pix[i+7])
+
+	case itRGBA:
+		return uint16(p.rgba.Pix[p.rgba.PixOffset(x, y)+3]) * 0x101
+
+	case itRGBA64:
+		i := p.rgba64.PixOffset(x, y)
+		return uint16(p.rgba64.Pix[i+6])<<8 | uint16(p.rgba64.Pix[i+7])
+
+	case itGray, itGray16, itYCbCr:
+		return 0xffff
+
+	case itPaletted:
+		i := p.paletted.PixOffset(x, y)
+		return f32u16(p.palette[p.paletted.Pix[i]].a * 0xffff)
+	}
+
+	_, _, _, a := p.image.At(x, y).RGBA()
+	return uint16(a)
+}
+
 func (p *pixelGetter) getPixelRow(y int, buf *[]pixel) {
 	*buf = (*buf)[:0]
 	for x := p.bounds.Min.X; x != p.bounds.Max.X; x++ {
