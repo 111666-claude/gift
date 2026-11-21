@@ -248,3 +248,70 @@ func saveImage(filename string, img image.Image) {
 	}
 }
 ```
+
+### TESTING
+
+The package keeps the original PNG golden tests (`TestGolden`, `testdata/`) and
+adds a system-level regression suite for the parallel (multi-goroutine) image
+processing paths in `parallel_regression_test.go`.
+
+A single golden image is not sufficient to catch chunk-boundary bugs: it is
+produced with one set of bounds and one processor count, so a row that is
+dropped or computed from the wrong neighbour at an internal chunk edge can
+still pass. The parallel suite instead renders each case twice — once with
+`SetParallelization(false)` (the serial reference) and once with
+parallelization enabled — and requires identical destination bounds and
+identical pixels. It also snapshots the complete backing buffer of every
+source image before and after drawing to prove the input is never modified.
+
+Covered by the matrix:
+
++ Image formats: RGBA, NRGBA and Gray16.
++ Source geometry: direct images and `SubImage`s, with zero and non-zero
+  `Bounds().Min`, plus large images whose chunks span several rows/columns.
++ Filters and combinations: resize (nearest, box, linear, Lanczos), rotate
+  (nearest, linear, cubic), 90/180/270 rotations, flips, convolution, Gaussian
+  blur, unsharp mask, rank filters, crop/crop-to-size, pixelate and the color
+  filters (`Contrast`, `Gamma`, `Hue`, `Colorize`, `Grayscale`, `Invert`,
+  `Sepia`, `ColorBalance`, `Sigmoid`).
++ Empty, one-pixel, one-column and one-row images are checked independently.
++ Non-commutative filter pairs are checked in each order, and the test asserts
+  that the orders actually produce different pixels (so the check is not
+  vacuous).
++ `DrawAt` with `CopyOperator` and `OverOperator`, at positive, negative and
+  destination-minimum positions.
+
+All inputs are generated deterministically from a seed. A failure names the
+seed, image format, source bounds, filter chain, the exact filter index, and
+the first differing coordinate, for example:
+
+    seed=1 variant="RGBA/large-nonzero-origin" srcBounds=(-5,11)-(132,19)
+      chain="conv-crop-scale-color-rotate" prefix="convolution/sobel-like"
+      filter[0]="convolution/sobel-like" parallel=true:
+      pixel mismatch at coord=(1,1) byte-channel=0: serial=0x0c parallel=0x12
+
+Reproduce that exact case with the seed from the message:
+
+    GIFT_TEST_SEED=1 go test -run TestParallel -v
+
+`TestParallelInjectedChunkBugs` proves the comparison is not vacuous: it runs a
+correctly chunked control plus two deliberately broken chunk implementations
+(an off-by-one exclusive chunk end that drops the last row of every chunk, and
+a neighbour lookup clamped to the chunk edge instead of the image edge). Both
+must be detected and localized to the first internal chunk boundary row.
+
+Run the whole suite:
+
+    go test ./...
+    go test -race ./...
+
+Reproducible parallel runs (the tests pin GOMAXPROCS to 4 so the chunk size is
+deterministic; override it in production code paths with the standard
+GOMAXPROCS environment variable):
+
+    GO111MODULE=off go test -count=1 -race ./...
+    GOMAXPROCS=8 GO111MODULE=off go test -count=1 -race -run TestParallel ./...
+
+The `-race` run is required for any change to `parallelize`, to a filter's
+chunking, or to `pixelGetter`/`pixelSetter`. The injected-fault tests are
+written to be race-free so the race detector can be used on the same run.
