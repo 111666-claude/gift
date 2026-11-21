@@ -49,6 +49,8 @@ var defaultOptions = Options{
 type GIFT struct {
 	Filters []Filter
 	Options Options
+
+	pixelFilterFusionDisabled bool
 }
 
 // New creates a new instance of the filter toolkit and initializes it with the given list of filters.
@@ -68,6 +70,21 @@ func (g *GIFT) SetParallelization(isEnabled bool) {
 // Parallelization returns the current state of parallelization option.
 func (g *GIFT) Parallelization() bool {
 	return g.Options.Parallelization
+}
+
+// SetPixelFilterFusion enables or disables the optimization that applies
+// adjacent per-pixel color filters (such as Brightness, Contrast, Saturation)
+// in a single pass without allocating an intermediate image for every filter.
+// The optimization is enabled by default and produces exactly the same output
+// as applying the filters one by one. Disable it to force the original
+// per-filter execution, e.g. for comparison or debugging purposes.
+func (g *GIFT) SetPixelFilterFusion(isEnabled bool) {
+	g.pixelFilterFusionDisabled = !isEnabled
+}
+
+// PixelFilterFusion returns the current state of the pixel filter fusion option.
+func (g *GIFT) PixelFilterFusion() bool {
+	return !g.pixelFilterFusionDisabled
 }
 
 // Add appends the given filters to the list of filters.
@@ -108,11 +125,16 @@ func (g *GIFT) Draw(dst draw.Image, src image.Image) {
 		return
 	}
 
-	first, last := 0, len(g.Filters)-1
+	filters := g.Filters
+	if g.PixelFilterFusion() {
+		filters = fusePixelFilters(filters)
+	}
+
+	first, last := 0, len(filters)-1
 	var tmpIn image.Image
 	var tmpOut draw.Image
 
-	for i, f := range g.Filters {
+	for i, f := range filters {
 		if i == first {
 			tmpIn = src
 		} else {

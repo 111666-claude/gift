@@ -236,6 +236,12 @@ func copyimage(dst draw.Image, src image.Image, options *Options) {
 
 type copyimageFilter struct{}
 
+func (p *copyimageFilter) pixelFunc(it imageType, numPixels int) func(pixel) pixel {
+	return func(px pixel) pixel {
+		return px
+	}
+}
+
 func (p *copyimageFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangle) {
 	dstBounds = image.Rect(0, 0, srcBounds.Dx(), srcBounds.Dy())
 	return
