@@ -56,7 +56,7 @@ The `Bounds` method takes the bounds of the source image and returns appropriate
 dst := image.NewRGBA(g.Bounds(src.Bounds()))
 ```
 
-There are two methods available to apply these filters to an image:
+There are several methods available to apply these filters to an image:
 
 - `Draw` applies all the added filters to the src image and outputs the result to the dst image starting from the top-left corner (Min point).
 ```go
@@ -81,6 +81,20 @@ gift.New().Draw(dstImage, bgImage)
 // Draw the fgImage over the dstImage at the (100, 100) position.
 gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
 ```
+
+- `DrawRegion` renders only the requested rectangle of the result without allocating full-size intermediate images. It is useful for large images where only a small viewport (for example a preview tile) is needed. The region's top-left corner is aligned with the destination's Min point:
+```go
+// Render only the bottom-right 200x200 part of the result.
+region := image.Rect(src.Bounds().Dx()-200, src.Bounds().Dy()-200, src.Bounds().Dx(), src.Bounds().Dy())
+viewport := image.NewNRGBA(image.Rect(0, 0, 200, 200))
+if err := g.DrawRegion(viewport, src, region); errors.Is(err, gift.ErrRegionUnsupported) {
+    // The chain contains a filter whose input support cannot be
+    // determined (e.g. Resize or Rotate). Use DrawRegionOrFull to
+    // transparently fall back to a full draw instead.
+    g.DrawRegionOrFull(viewport, src, region)
+}
+```
+The pixels produced by `DrawRegion` are identical to a full `Draw` cropped to the same rectangle. It supports all dimension-preserving filters (pointwise color filters, finite-radius blurs and convolutions, rank filters and pixelation). Chains containing dimension-changing filters return `ErrRegionUnsupported` instead of producing seam-prone output.
 
 
 ### SUPPORTED FILTERS

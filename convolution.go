@@ -82,6 +82,18 @@ func (p *convolutionFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.R
 	return
 }
 
+// Support implements FilterSupport. A convolution output pixel at (x, y)
+// depends on the source pixels within the square kernel neighborhood, i.e.
+// ksize/2 pixels in every direction (edge pixels are clamped).
+func (p *convolutionFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	ksize, _ := prepareConvolutionWeights(p.kernel, p.normalize)
+	if ksize < 1 {
+		return dstRect
+	}
+	halo := ksize / 2
+	return dstRect.Inset(-halo)
+}
+
 func (p *convolutionFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 	if options == nil {
 		options = &defaultOptions
@@ -333,6 +345,16 @@ func (p *gausssianBlurFilter) Bounds(srcBounds image.Rectangle) (dstBounds image
 	return
 }
 
+// Support implements FilterSupport. The gaussian kernel has a finite radius
+// of ceil(3*sigma), applied both horizontally and vertically.
+func (p *gausssianBlurFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	if p.sigma <= 0 {
+		return dstRect
+	}
+	radius := int(math.Ceil(float64(p.sigma * 3)))
+	return dstRect.Inset(-radius)
+}
+
 func (p *gausssianBlurFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 	if options == nil {
 		options = &defaultOptions
@@ -367,6 +389,9 @@ func (p *gausssianBlurFilter) Draw(dst draw.Image, src image.Image, options *Opt
 		kernel[i] /= sum
 	}
 
+	// The temp image uses the input bounds: in region rendering the input
+	// may be a cropped sub-image and allocating for the original full image
+	// would defeat the memory savings of the region path.
 	tmp := createTempImage(srcb)
 	convolve1dh(tmp, src, kernel, options)
 	convolve1dv(dst, tmp, kernel, options)
@@ -399,6 +424,14 @@ type unsharpMaskFilter struct {
 func (p *unsharpMaskFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangle) {
 	dstBounds = image.Rect(0, 0, srcBounds.Dx(), srcBounds.Dy())
 	return
+}
+
+// Support implements FilterSupport. Unsharp masking combines each pixel with
+// its gaussian-blurred value, so the support is the same as for a gaussian
+// blur with the same sigma: a radius of ceil(3*sigma).
+func (p *unsharpMaskFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	radius := int(math.Ceil(float64(p.sigma * 3)))
+	return dstRect.Inset(-radius)
 }
 
 func unsharp(orig, blurred, amount, threshold float32) float32 {
@@ -478,6 +511,19 @@ func (p *meanFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangl
 	return
 }
 
+// Support implements FilterSupport. The mean is taken over the (possibly
+// disk-shaped) kernel neighborhood, whose radius is ksize/2.
+func (p *meanFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	ksize := p.ksize
+	if ksize%2 == 0 {
+		ksize--
+	}
+	if ksize <= 1 {
+		return dstRect
+	}
+	return dstRect.Inset(-(ksize / 2))
+}
+
 func (p *meanFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 	if options == nil {
 		options = &defaultOptions
@@ -530,6 +576,13 @@ type hvConvolutionFilter struct {
 func (p *hvConvolutionFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangle) {
 	dstBounds = image.Rect(0, 0, srcBounds.Dx(), srcBounds.Dy())
 	return
+}
+
+// Support implements FilterSupport. Both the horizontal and vertical
+// convolutions use 3x3 kernels, so every output pixel depends on a 3x3
+// source neighborhood.
+func (p *hvConvolutionFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	return dstRect.Inset(-1)
 }
 
 func (p *hvConvolutionFilter) Draw(dst draw.Image, src image.Image, options *Options) {

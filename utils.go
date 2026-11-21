@@ -237,6 +237,11 @@ func (p *copyimageFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rec
 	return
 }
 
+// Support implements FilterSupport. The copy filter is pointwise.
+func (p *copyimageFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	return dstRect
+}
+
 func (p *copyimageFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 	copyimage(dst, src, options)
 }

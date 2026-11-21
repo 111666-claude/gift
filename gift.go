@@ -39,6 +39,14 @@ type Filter interface {
 // Options is the parameters passed to image processing filters.
 type Options struct {
 	Parallelization bool
+
+	// regionOrigin, when non-nil, marks that the filter is being executed as
+	// part of a region (viewport) rendering. It holds the origin of the
+	// original source image so that coordinate-sensitive filters (pixelation
+	// block grids) keep anchoring to the original image instead of the
+	// cropped sub-image origin. It is nil for ordinary Draw calls and is not
+	// part of the public API.
+	regionOrigin *image.Point
 }
 
 var defaultOptions = Options{

@@ -31,6 +31,12 @@ func (p *colorchanFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rec
 	return
 }
 
+// Support implements FilterSupport. Per-channel color filters are pointwise:
+// each output pixel depends only on the source pixel at the same position.
+func (p *colorchanFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	return dstRect
+}
+
 func (p *colorchanFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 	if options == nil {
 		options = &defaultOptions
@@ -223,6 +229,12 @@ type colorFilter struct {
 func (p *colorFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangle) {
 	dstBounds = image.Rect(0, 0, srcBounds.Dx(), srcBounds.Dy())
 	return
+}
+
+// Support implements FilterSupport. Per-pixel color filters are pointwise:
+// each output pixel depends only on the source pixel at the same position.
+func (p *colorFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	return dstRect
 }
 
 func (p *colorFilter) Draw(dst draw.Image, src image.Image, options *Options) {

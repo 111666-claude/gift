@@ -24,6 +24,19 @@ func (p *rankFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangl
 	return
 }
 
+// Support implements FilterSupport. Rank filters inspect the (possibly
+// disk-shaped) kernel neighborhood of every pixel, whose radius is ksize/2.
+func (p *rankFilter) Support(dstRect image.Rectangle) (srcRect image.Rectangle) {
+	ksize := p.ksize
+	if ksize%2 == 0 {
+		ksize--
+	}
+	if ksize <= 1 {
+		return dstRect
+	}
+	return dstRect.Inset(-(ksize / 2))
+}
+
 func (p *rankFilter) Draw(dst draw.Image, src image.Image, options *Options) {
 	if options == nil {
 		options = &defaultOptions
