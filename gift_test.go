@@ -484,6 +484,7 @@ func TestDraw(t *testing.T) {
 		{Minimum(3, true)},
 		{Mean(3, true)},
 		{Median(3, true)},
+		{NormalMap(2, 1, 1, false, ClampEdge)},
 		{Pixelate(3)},
 		{Saturation(10)},
 		{Sepia(10)},
@@ -563,6 +564,7 @@ func TestGolden(t *testing.T) {
 		"median":              Median(5, true),
 		"minimum":             Minimum(5, true),
 		"maximum":             Maximum(5, true),
+		"normal_map":          NormalMap(2, 1, 1, false, ClampEdge),
 		"hue_rotate":          Hue(45),
 		"color_balance":       ColorBalance(10, -10, -10),
 		"color_func": ColorFunc(
