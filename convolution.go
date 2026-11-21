@@ -77,11 +77,30 @@ func (p *convolutionFilter) Draw(dst draw.Image, src image.Image, options *Optio
 	}
 
 	srcb := src.Bounds()
-	dstb := dst.Bounds()
 
 	if srcb.Dx() <= 0 || srcb.Dy() <= 0 {
 		return
 	}
+
+	// Fast path: a kernel separable into horizontal and vertical 1-D kernels
+	// can be applied in two O(n) passes instead of one O(n*n) pass.
+	// The abs and delta options are applied only after the full 2-D
+	// accumulation in the generic implementation; evaluating them between or
+	// after 1-D passes would change those semantics, so such configurations
+	// always use the generic implementation.
+	if !p.abs && p.delta == 0 {
+		if h, v, ok := factorSeparableKernel(p.kernel, p.normalize); ok {
+			p.drawSeparable(dst, src, h, v, options)
+			return
+		}
+	}
+
+	p.drawGeneric(dst, src, options)
+}
+
+func (p *convolutionFilter) drawGeneric(dst draw.Image, src image.Image, options *Options) {
+	srcb := src.Bounds()
+	dstb := dst.Bounds()
 
 	ksize, weights := prepareConvolutionWeights(p.kernel, p.normalize)
 	kcenter := ksize / 2
@@ -203,6 +222,246 @@ func Convolution(kernel []float32, normalize, alpha, abs bool, delta float32) Fi
 		abs:       abs,
 		delta:     delta,
 	}
+}
+
+// separableMaxRelativeError is the tolerance used when checking whether a
+// 2-D kernel equals the outer product of two 1-D kernels. Float32 products
+// accumulated into a matrix deviate from the reconstructed outer product by a
+// few ulps, so a small relative epsilon is used instead of exact equality.
+const separableMaxRelativeError = 1e-6
+
+// isFinitef32 reports whether v is neither NaN nor an infinity.
+func isFinitef32(v float32) bool {
+	return v == v && -math.MaxFloat32 <= v && v <= math.MaxFloat32
+}
+
+// factorSeparableKernel tries to express the (possibly normalized) square
+// kernel as an outer product of a horizontal 1-D kernel h (column offsets,
+// length n) and a vertical 1-D kernel v (row offsets, length n):
+//
+//	kernel2d[j][i] == v[j] * h[i]
+//
+// It returns ok == false for empty/zero kernels, non-finite kernel values or
+// matrices that are not of rank one (including all matrices smaller than 3x3,
+// for which the generic implementation is already cheap). No intermediate
+// n*n matrix is allocated, so very wide kernels cannot trigger excessive
+// allocation.
+func factorSeparableKernel(kernel []float32, normalize bool) (h, v []float32, ok bool) {
+	n := int(math.Sqrt(float64(len(kernel))))
+	if n%2 == 0 {
+		n--
+	}
+	if n < 3 {
+		return nil, nil, false
+	}
+
+	// Work on the same effective values prepareConvolutionWeights would use:
+	// out-of-range entries are treated as zero and the kernel is normalized
+	// with the same divisor rules.
+	sum, sumpositive := float32(0), float32(0)
+	for j := 0; j < n; j++ {
+		for i := 0; i < n; i++ {
+			w := kernel[j*n+i]
+			if !isFinitef32(w) {
+				return nil, nil, false
+			}
+			sum += w
+			if w > 0 {
+				sumpositive += w
+			}
+		}
+	}
+
+	div := float32(0)
+	if normalize {
+		if sum != 0 {
+			div = sum
+		} else if sumpositive != 0 {
+			div = sumpositive
+		}
+	}
+
+	// Find a non-zero pivot element.
+	pi, pj := -1, -1
+	for j := 0; j < n && pi < 0; j++ {
+		for i := 0; i < n; i++ {
+			if kernel[j*n+i] != 0 {
+				pi, pj = i, j
+				break
+			}
+		}
+	}
+	if pi < 0 {
+		// All-zero kernel: the generic path handles it without divisions.
+		return nil, nil, false
+	}
+
+	pivot := kernel[pj*n+pi]
+	h = make([]float32, n)
+	v = make([]float32, n)
+	// Anchor h[pivot column] = 1; then v[pivot row] = pivot.
+	for i := 0; i < n; i++ {
+		h[i] = kernel[pj*n+i] / pivot
+	}
+	for j := 0; j < n; j++ {
+		v[j] = kernel[j*n+pi]
+	}
+
+	// Verify the whole matrix is exactly (within tolerance) the outer
+	// product v (j) x h (i). Structural zeroes must match exactly so that
+	// the set of sampled offsets stays identical to the generic path.
+	for j := 0; j < n; j++ {
+		for i := 0; i < n; i++ {
+			got := kernel[j*n+i]
+			want := v[j] * h[i]
+			if normalize && div != 0 {
+				got /= div
+				want /= div
+			}
+			if got == 0 {
+				if want != 0 {
+					return nil, nil, false
+				}
+			} else {
+				tol := separableMaxRelativeError * absf32(got)
+				if absf32(got-want) > tol {
+					return nil, nil, false
+				}
+			}
+		}
+	}
+
+	if normalize && div != 0 {
+		for i := range h {
+			h[i] /= div
+		}
+	}
+	return h, v, true
+}
+
+// convolveLinePlain computes a plain weighted 1-D convolution of srcBuf into
+// dstBuf (both of the same length). The kernel must have odd length; offsets
+// outside the buffer are clamped to the edge, matching the border handling of
+// the generic 2-D implementation. Zero kernel entries are skipped and no
+// weight table is allocated, so the function allocates nothing. When alpha is
+// false the alpha channel is carried through unchanged.
+func convolveLinePlain(dstBuf, srcBuf []pixel, kernel []float32, alpha bool) {
+	max := len(srcBuf) - 1
+	if max < 0 || len(kernel) == 0 {
+		return
+	}
+	center := len(kernel) / 2
+	for dstu := 0; dstu < len(srcBuf); dstu++ {
+		var r, g, b, a float32
+		for i, w := range kernel {
+			if w == 0 {
+				continue
+			}
+			k := dstu + i - center
+			if k < 0 {
+				k = 0
+			} else if k > max {
+				k = max
+			}
+			c := srcBuf[k]
+			r += c.R * w
+			g += c.G * w
+			b += c.B * w
+			if alpha {
+				a += c.A * w
+			}
+		}
+		if !alpha {
+			a = srcBuf[dstu].A
+		}
+		dstBuf[dstu] = pixel{r, g, b, a}
+	}
+}
+
+// float32Image is a temporary RGBA image holding unclamped float32 channel
+// values. It lets multi-pass convolutions keep signed intermediate results
+// (e.g. from edge-detection kernels) without the clamping or quantization a
+// regular NRGBA64 destination would impose.
+type float32Image struct {
+	bounds image.Rectangle
+	pix    []pixel
+}
+
+func newFloat32Image(r image.Rectangle) *float32Image {
+	return &float32Image{bounds: r, pix: make([]pixel, r.Dx()*r.Dy())}
+}
+
+func (f *float32Image) row(y int) []pixel {
+	start := (y - f.bounds.Min.Y) * f.bounds.Dx()
+	return f.pix[start : start+f.bounds.Dx() : start+f.bounds.Dx()]
+}
+
+// drawSeparable applies the rank-one kernel v (j) x h (i) as a horizontal
+// 1-D pass followed by a vertical 1-D pass, both computed over unclamped
+// float32 pixel buffers so signed intermediate values are preserved. Each
+// source pixel participates in exactly one computation per pass (the passes
+// are parallelized independently over rows/columns), matching the generic
+// implementation's border clamping, normalization, alpha handling and output
+// bounds. The only intermediate allocation is one float32 image of the
+// source size; no per-pixel weight tables are allocated.
+func (p *convolutionFilter) drawSeparable(dst draw.Image, src image.Image, h, v []float32, options *Options) {
+	srcb := src.Bounds()
+	dstb := dst.Bounds()
+	w := srcb.Dx()
+
+	tmp := newFloat32Image(srcb)
+	pixGetter := newPixelGetter(src)
+	pixSetter := newPixelSetter(dst)
+
+	// Horizontal pass: each source row is convolved once.
+	parallelize(options.Parallelization, srcb.Min.Y, srcb.Max.Y, func(pmin, pmax int) {
+		srcRow := make([]pixel, 0, w)
+		for y := pmin; y < pmax; y++ {
+			pixGetter.getPixelRow(y, &srcRow)
+			convolveLinePlain(tmp.row(y), srcRow, h, p.alpha)
+		}
+	})
+
+	// Vertical pass: each output row is assembled from the convolved rows.
+	vcenter := len(v) / 2
+	parallelize(options.Parallelization, srcb.Min.Y, srcb.Max.Y, func(pmin, pmax int) {
+		out := make([]pixel, w)
+		for y := pmin; y < pmax; y++ {
+			for x := range out {
+				out[x] = pixel{}
+			}
+			for j, wv := range v {
+				if wv == 0 {
+					continue
+				}
+				ry := y + j - vcenter
+				if ry < srcb.Min.Y {
+					ry = srcb.Min.Y
+				} else if ry > srcb.Max.Y-1 {
+					ry = srcb.Max.Y - 1
+				}
+				row := tmp.row(ry)
+				for x := 0; x < w; x++ {
+					c := row[x]
+					out[x].R += c.R * wv
+					out[x].G += c.G * wv
+					out[x].B += c.B * wv
+					if p.alpha {
+						out[x].A += c.A * wv
+					}
+				}
+			}
+			if !p.alpha {
+				// Same rule as the generic path: the alpha channel is
+				// taken from the center source pixel untouched.
+				row := tmp.row(y)
+				for x := 0; x < w; x++ {
+					out[x].A = row[x].A
+				}
+			}
+			pixSetter.setPixelRow(dstb.Min.Y+y-srcb.Min.Y, out)
+		}
+	})
 }
 
 // prepare pixel weights using convolution kernel. weights equal to 0 are excluded
