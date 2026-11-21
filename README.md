@@ -129,6 +129,40 @@ gift.New().DrawAt(dstImage, fgImage, image.Pt(100, 100), gift.OverOperator)
     - UnsharpMask(sigma, amount, threshold float32)
 
 
+### SAVING FILTER CHAINS
+
+A filter chain can be saved as a versioned JSON preset and restored later. The
+order of the filters and all of their parameters are preserved. Supported
+filters are `Brightness`, `Contrast`, `Gamma`, `Resize`, `ResizeToFit`,
+`ResizeToFill`, `Crop`, `CropToSize`, `Rotate`, `Rotate90`, `Rotate180`,
+`Rotate270`, `FlipHorizontal`, `FlipVertical`, `Transpose`, `Transverse` and
+`GaussianBlur`.
+
+```go
+g := gift.New(
+	gift.Brightness(10),
+	gift.GaussianBlur(2),
+)
+
+data, err := gift.MarshalPreset(g)
+if err != nil {
+	// A filter cannot be represented (for example a custom Filter
+	// implementation or a non-finite parameter).
+}
+
+restored, err := gift.UnmarshalPreset(data)
+if err != nil {
+	// The preset has an unknown version or filter, a missing field,
+	// a non-finite parameter or a size that is too large.
+}
+```
+
+Errors are reported as `*gift.PresetError`, which identifies the offending
+filter by its zero-based `Index` in the chain and by `Name`. Use
+`errors.Is(err, gift.ErrUnsupportedFilter)` (or one of the other sentinel
+errors) to distinguish the cause. Filters that cannot be represented are
+rejected explicitly rather than silently dropped.
+
 ### FILTER EXAMPLES
 
 The original image:

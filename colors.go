@@ -21,9 +21,18 @@ func getFromLut(lut []float32, u float32) float32 {
 	return lut[v]
 }
 
+// colorchanPreset holds the serializable description of a color channel filter.
+// It is nil for filters that cannot be represented in a preset.
+type colorchanPreset struct {
+	name       string
+	percentage float32 // brightness and contrast
+	gamma      float32 // gamma
+}
+
 type colorchanFilter struct {
-	fn  func(float32) float32
-	lut bool
+	fn     func(float32) float32
+	lut    bool
+	preset *colorchanPreset
 }
 
 func (p *colorchanFilter) Bounds(srcBounds image.Rectangle) (dstBounds image.Rectangle) {
@@ -126,7 +135,8 @@ func Gamma(gamma float32) Filter {
 		fn: func(x float32) float32 {
 			return powf32(x, e)
 		},
-		lut: true,
+		lut:    true,
+		preset: &colorchanPreset{name: presetGamma, gamma: gamma},
 	}
 }
 
@@ -147,7 +157,6 @@ func sigmoid(a, b, x float32) float32 {
 //	)
 //	dst := image.NewRGBA(g.Bounds(src.Bounds()))
 //	g.Draw(dst, src)
-//
 func Sigmoid(midpoint, factor float32) Filter {
 	a := minf32(maxf32(midpoint, 0), 1)
 	b := absf32(factor)
@@ -175,10 +184,6 @@ func Sigmoid(midpoint, factor float32) Filter {
 // The percentage parameter must be in range (-100, 100). The percentage = 0 gives the original image.
 // The percentage = -100 gives solid grey image. The percentage = 100 gives an overcontrasted image.
 func Contrast(percentage float32) Filter {
-	if percentage == 0 {
-		return &copyimageFilter{}
-	}
-
 	p := 1 + minf32(maxf32(percentage, -100), 100)/100
 
 	return &colorchanFilter{
@@ -194,7 +199,8 @@ func Contrast(percentage float32) Filter {
 				return 1
 			}
 		},
-		lut: false,
+		lut:    false,
+		preset: &colorchanPreset{name: presetContrast, percentage: percentage},
 	}
 }
 
@@ -202,17 +208,14 @@ func Contrast(percentage float32) Filter {
 // The percentage parameter must be in range (-100, 100). The percentage = 0 gives the original image.
 // The percentage = -100 gives solid black image. The percentage = 100 gives solid white image.
 func Brightness(percentage float32) Filter {
-	if percentage == 0 {
-		return &copyimageFilter{}
-	}
-
 	shift := minf32(maxf32(percentage, -100), 100) / 100
 
 	return &colorchanFilter{
 		fn: func(x float32) float32 {
 			return x + shift
 		},
-		lut: false,
+		lut:    false,
+		preset: &colorchanPreset{name: presetBrightness, percentage: percentage},
 	}
 }
 
@@ -265,7 +268,6 @@ func Grayscale() Filter {
 //	)
 //	dst := image.NewRGBA(g.Bounds(src.Bounds()))
 //	g.Draw(dst, src)
-//
 func Sepia(percentage float32) Filter {
 	adjustAmount := minf32(maxf32(percentage, 0), 100) / 100
 	rr := 1 - 0.607*adjustAmount
@@ -419,7 +421,6 @@ func Saturation(percentage float32) Filter {
 //	)
 //	dst := image.NewRGBA(g.Bounds(src.Bounds()))
 //	g.Draw(dst, src)
-//
 func Colorize(hue, saturation, percentage float32) Filter {
 	h := normalizeHue(hue / 360)
 	s := minf32(maxf32(saturation, 0), 100) / 100
@@ -450,7 +451,6 @@ func Colorize(hue, saturation, percentage float32) Filter {
 //	)
 //	dst := image.NewRGBA(g.Bounds(src.Bounds()))
 //	g.Draw(dst, src)
-//
 func ColorBalance(percentageRed, percentageGreen, percentageBlue float32) Filter {
 	pr := 1 + minf32(maxf32(percentageRed, -100), 500)/100
 	pg := 1 + minf32(maxf32(percentageGreen, -100), 500)/100
@@ -500,7 +500,6 @@ func Threshold(percentage float32) Filter {
 //	)
 //	dst := image.NewRGBA(g.Bounds(src.Bounds()))
 //	g.Draw(dst, src)
-//
 func ColorFunc(fn func(r0, g0, b0, a0 float32) (r, g, b, a float32)) Filter {
 	return &colorFilter{
 		fn: func(px pixel) pixel {
