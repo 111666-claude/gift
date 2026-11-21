@@ -61,6 +61,11 @@ func absf32(x float32) float32 {
 	return x
 }
 
+// isNonFinite reports whether x is NaN or an infinity.
+func isNonFinite(x float32) bool {
+	return math.IsNaN(float64(x)) || math.IsInf(float64(x), 0)
+}
+
 func minf32(x, y float32) float32 {
 	if x < y {
 		return x

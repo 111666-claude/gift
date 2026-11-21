@@ -407,6 +407,146 @@ func Saturation(percentage float32) Filter {
 	}
 }
 
+// HueRange describes a selective hue adjustment applied to a range of hues
+// on the color wheel.
+//
+// MinHue and MaxHue are the range boundaries in degrees, typically in range (0, 360).
+// The range spans clockwise from MinHue to MaxHue, so a range with MinHue > MaxHue
+// wraps past 0° (e.g. MinHue = 350, MaxHue = 10 covers the reds around 0°).
+// A range with MinHue == MaxHue (after normalization) is empty and is ignored.
+//
+// Feather is the width in degrees of the soft transition band outside both edges
+// of the range. It must be non-negative; a negative or non-finite value is treated as 0.
+//
+// HueShift is the hue rotation in degrees applied to the pixels inside the range.
+// SaturationShift is the saturation change in percent, it must be in range (-100, 500).
+// Non-finite HueShift or SaturationShift values are treated as 0.
+type HueRange struct {
+	MinHue, MaxHue  float32
+	Feather         float32
+	HueShift        float32
+	SaturationShift float32
+}
+
+type selectiveHueRange struct {
+	min      float32 // normalized start of the range, in [0, 360)
+	width    float32 // clockwise width of the range, in (0, 360]
+	feather  float32 // soft edge width in degrees, in [0, 180]
+	hueShift float32 // hue rotation as a fraction of the full circle
+	satShift float32 // saturation multiplier - 1
+}
+
+func smoothstepf32(x float32) float32 {
+	x = minf32(maxf32(x, 0), 1)
+	return x * x * (3 - 2*x)
+}
+
+// weight returns the strength of the range at hue h (degrees, in [0, 360)).
+// It is 1 inside the range and falls off smoothly to 0 across the feather bands.
+func (r *selectiveHueRange) weight(h float32) float32 {
+	t := h - r.min
+	if t < 0 {
+		t += 360
+	}
+	if t <= r.width {
+		return 1
+	}
+	if r.feather <= 0 {
+		return 0
+	}
+	w := float32(0)
+	if d := t - r.width; d < r.feather {
+		w = 1 - smoothstepf32(d/r.feather)
+	}
+	if d := 360 - t; d < r.feather {
+		w = maxf32(w, 1-smoothstepf32(d/r.feather))
+	}
+	return w
+}
+
+// SelectiveHue creates a filter that adjusts the hue and saturation of the pixels
+// whose hue falls into one of the given ranges, leaving the other pixels unchanged.
+// The range edges can be feathered to get a smooth transition without hard breaks.
+// If a pixel matches several ranges, the first matching range in the list wins.
+// The adjustment strength is scaled by the pixel saturation, so near-gray pixels
+// stay unchanged, and the pixel lightness and alpha are always preserved.
+// Ranges with non-finite boundaries or with MinHue == MaxHue are ignored;
+// if no valid ranges remain, the filter gives the original image.
+//
+// Example:
+//
+//	g := gift.New(
+//		gift.SelectiveHue(
+//			gift.HueRange{MinHue: 200, MaxHue: 260, Feather: 20, HueShift: 120}, // recolor blue buttons only
+//		),
+//	)
+//	dst := image.NewRGBA(g.Bounds(src.Bounds()))
+//	g.Draw(dst, src)
+//
+func SelectiveHue(ranges ...HueRange) Filter {
+	var rs []selectiveHueRange
+	for _, r := range ranges {
+		if isNonFinite(r.MinHue) || isNonFinite(r.MaxHue) {
+			continue
+		}
+		min := normalizeHue(r.MinHue/360) * 360
+		max := normalizeHue(r.MaxHue/360) * 360
+		width := max - min
+		if width < 0 {
+			width += 360
+		}
+		if width == 0 {
+			continue
+		}
+		feather := r.Feather
+		if isNonFinite(feather) || feather < 0 {
+			feather = 0
+		}
+		feather = minf32(feather, 180)
+		hueShift := r.HueShift
+		if isNonFinite(hueShift) {
+			hueShift = 0
+		}
+		satShift := r.SaturationShift
+		if isNonFinite(satShift) {
+			satShift = 0
+		}
+		satShift = minf32(maxf32(satShift, -100), 500) / 100
+		rs = append(rs, selectiveHueRange{
+			min:      min,
+			width:    width,
+			feather:  feather,
+			hueShift: normalizeHue(hueShift / 360),
+			satShift: satShift,
+		})
+	}
+	if len(rs) == 0 {
+		return &copyimageFilter{}
+	}
+
+	return &colorFilter{
+		fn: func(px pixel) pixel {
+			h, s, l := convertRGBToHSL(px.r, px.g, px.b)
+			if s == 0 {
+				return px
+			}
+			hd := h * 360
+			for i := range rs {
+				w := rs[i].weight(hd)
+				if w <= 0 {
+					continue
+				}
+				w *= s
+				h = normalizeHue(h + rs[i].hueShift*w)
+				s = minf32(maxf32(s*(1+rs[i].satShift*w), 0), 1)
+				r, g, b := convertHSLToRGB(h, s, l)
+				return pixel{r, g, b, px.a}
+			}
+			return px
+		},
+	}
+}
+
 // Colorize creates a filter that produces a colorized version of an image.
 // The hue parameter is the angle on the color wheel, typically in range (0, 360).
 // The saturation parameter must be in range (0, 100).

@@ -1160,3 +1160,260 @@ func TestColorFunc(t *testing.T) {
 		}
 	}
 }
+
+// makeHueWheel returns a 360x1 NRGBA image where the pixel at x has
+// hue x (degrees), saturation 1 and lightness 0.5.
+func makeHueWheel() *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, 360, 1))
+	for x := 0; x < 360; x++ {
+		r, g, b := convertHSLToRGB(float32(x)/360, 1, 0.5)
+		i := img.PixOffset(x, 0)
+		img.Pix[i+0] = uint8(r*255 + 0.5)
+		img.Pix[i+1] = uint8(g*255 + 0.5)
+		img.Pix[i+2] = uint8(b*255 + 0.5)
+		img.Pix[i+3] = 0xff
+	}
+	return img
+}
+
+// hueOf returns the hue in degrees of an NRGBA pixel.
+func hueOf(img *image.NRGBA, x, y int) float32 {
+	i := img.PixOffset(x, y)
+	h, _, _ := convertRGBToHSL(
+		float32(img.Pix[i+0])/255,
+		float32(img.Pix[i+1])/255,
+		float32(img.Pix[i+2])/255,
+	)
+	return h * 360
+}
+
+// hueDist returns the circular distance between two hues in degrees.
+func hueDist(a, b float32) float32 {
+	d := absf32(a - b)
+	if d > 180 {
+		d = 360 - d
+	}
+	return d
+}
+
+func TestSelectiveHueBasic(t *testing.T) {
+	src := makeHueWheel()
+	g := New(SelectiveHue(
+		HueRange{MinHue: 200, MaxHue: 260, HueShift: 120},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	if !dst.Bounds().Size().Eq(src.Bounds().Size()) {
+		t.Fatalf("SelectiveHue bad result size: expected %v got %v", src.Bounds().Size(), dst.Bounds().Size())
+	}
+
+	// red (0) and green (120) are outside the range and must stay unchanged
+	for _, x := range []int{0, 60, 120, 180, 300} {
+		if d := hueDist(hueOf(dst, x, 0), float32(x)); d > 2 {
+			t.Errorf("SelectiveHue changed hue outside the range at %d: got %v", x, hueOf(dst, x, 0))
+		}
+	}
+	// the middle of the range is rotated by 120 degrees
+	if d := hueDist(hueOf(dst, 230, 0), 350); d > 2 {
+		t.Errorf("SelectiveHue bad hue inside the range: expected 350 got %v", hueOf(dst, 230, 0))
+	}
+}
+
+func TestSelectiveHueFeather(t *testing.T) {
+	src := makeHueWheel()
+	g := New(SelectiveHue(
+		HueRange{MinHue: 170, MaxHue: 190, Feather: 60, HueShift: 180},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	// outside the feather band (170-60=110, 190+60=250) the image is unchanged
+	for _, x := range []int{0, 50, 100, 109, 251, 300} {
+		if d := hueDist(hueOf(dst, x, 0), float32(x)); d > 2 {
+			t.Errorf("SelectiveHue changed hue outside the feather band at %d: got %v", x, hueOf(dst, x, 0))
+		}
+	}
+	// inside the range the shift is fully applied
+	if d := hueDist(hueOf(dst, 180, 0), 0); d > 2 {
+		t.Errorf("SelectiveHue bad hue inside the range: expected 0 got %v", hueOf(dst, 180, 0))
+	}
+	// the feathered transition must be smooth: no hard breaks between neighbors
+	// (without feathering the 180 degree shift would show up as a ~180 degree step)
+	for x := 1; x < 360; x++ {
+		if d := hueDist(hueOf(dst, x-1, 0), hueOf(dst, x, 0)); d > 8 {
+			t.Errorf("SelectiveHue hard transition between %d and %d: %v", x-1, x, d)
+		}
+	}
+	// a pixel halfway through the feather band gets a partial shift
+	if h := hueOf(dst, 140, 0); hueDist(h, 140) < 30 || hueDist(h, 140) > 150 {
+		t.Errorf("SelectiveHue bad partial shift in the feather band at 140: got %v", h)
+	}
+}
+
+func TestSelectiveHueGrayscale(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 256, 1))
+	for x := 0; x < 256; x++ {
+		i := src.PixOffset(x, 0)
+		src.Pix[i+0] = uint8(x)
+		src.Pix[i+1] = uint8(x)
+		src.Pix[i+2] = uint8(x)
+		src.Pix[i+3] = 0xff
+	}
+	g := New(SelectiveHue(
+		HueRange{MinHue: 0, MaxHue: 350, Feather: 20, HueShift: 180, SaturationShift: 100},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	for x := 0; x < 256; x++ {
+		i := dst.PixOffset(x, 0)
+		if dst.Pix[i+0] != uint8(x) || dst.Pix[i+1] != uint8(x) || dst.Pix[i+2] != uint8(x) {
+			t.Errorf("SelectiveHue changed gray pixel at %d: got %v", x, dst.Pix[i:i+3])
+		}
+	}
+}
+
+func TestSelectiveHueAlpha(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 256, 1))
+	r, g, b := convertHSLToRGB(230.0/360, 1, 0.5)
+	for x := 0; x < 256; x++ {
+		i := src.PixOffset(x, 0)
+		src.Pix[i+0] = uint8(r*255 + 0.5)
+		src.Pix[i+1] = uint8(g*255 + 0.5)
+		src.Pix[i+2] = uint8(b*255 + 0.5)
+		src.Pix[i+3] = uint8(x)
+	}
+	gift := New(SelectiveHue(
+		HueRange{MinHue: 200, MaxHue: 260, HueShift: 120},
+	))
+	dst := image.NewNRGBA(gift.Bounds(src.Bounds()))
+	gift.Draw(dst, src)
+
+	for x := 0; x < 256; x++ {
+		i := dst.PixOffset(x, 0)
+		if d := int(dst.Pix[i+3]) - x; d < -1 || d > 1 {
+			t.Errorf("SelectiveHue changed alpha at %d: expected %d got %d", x, x, dst.Pix[i+3])
+		}
+	}
+	// the hue shift is applied regardless of the alpha value
+	if d := hueDist(hueOf(dst, 128, 0), 350); d > 3 {
+		t.Errorf("SelectiveHue bad hue on a semi-transparent pixel: expected 350 got %v", hueOf(dst, 128, 0))
+	}
+}
+
+func TestSelectiveHueWrapAround(t *testing.T) {
+	src := makeHueWheel()
+	g := New(SelectiveHue(
+		HueRange{MinHue: 350, MaxHue: 10, HueShift: 120},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	// red (0) is inside the wrapping range and becomes green (120)
+	if d := hueDist(hueOf(dst, 0, 0), 120); d > 2 {
+		t.Errorf("SelectiveHue bad hue for wrapped range: expected 120 got %v", hueOf(dst, 0, 0))
+	}
+	// blue (240) is outside the range
+	if d := hueDist(hueOf(dst, 240, 0), 240); d > 2 {
+		t.Errorf("SelectiveHue changed hue outside the wrapped range: got %v", hueOf(dst, 240, 0))
+	}
+}
+
+func TestSelectiveHueOverlapPriority(t *testing.T) {
+	src := makeHueWheel()
+	g := New(SelectiveHue(
+		HueRange{MinHue: 180, MaxHue: 240, HueShift: 60},
+		HueRange{MinHue: 200, MaxHue: 260, HueShift: -60},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	// hue 220 belongs to both ranges; the first one wins
+	if d := hueDist(hueOf(dst, 220, 0), 280); d > 2 {
+		t.Errorf("SelectiveHue bad hue for overlapping ranges: expected 280 got %v", hueOf(dst, 220, 0))
+	}
+	// hue 250 belongs to the second range only
+	if d := hueDist(hueOf(dst, 250, 0), 190); d > 2 {
+		t.Errorf("SelectiveHue bad hue for the second range: expected 190 got %v", hueOf(dst, 250, 0))
+	}
+}
+
+func TestSelectiveHueSaturation(t *testing.T) {
+	src := makeHueWheel()
+	g := New(SelectiveHue(
+		HueRange{MinHue: 200, MaxHue: 260, SaturationShift: -100},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	// a fully desaturated pixel turns gray and keeps its lightness (0.5)
+	i := dst.PixOffset(230, 0)
+	for c := 0; c < 3; c++ {
+		if d := int(dst.Pix[i+c]) - 128; d < -2 || d > 2 {
+			t.Errorf("SelectiveHue bad desaturated pixel: got %v", dst.Pix[i:i+3])
+		}
+	}
+	// saturation outside the range is untouched
+	j := dst.PixOffset(0, 0)
+	k := src.PixOffset(0, 0)
+	if dst.Pix[j] != src.Pix[k] || dst.Pix[j+1] != src.Pix[k+1] || dst.Pix[j+2] != src.Pix[k+2] {
+		t.Errorf("SelectiveHue changed saturation outside the range: got %v", dst.Pix[j:j+3])
+	}
+}
+
+func TestSelectiveHueInvalidParams(t *testing.T) {
+	src := makeHueWheel()
+
+	testData := []struct {
+		desc   string
+		ranges []HueRange
+	}{
+		{"no ranges", nil},
+		{"empty range", []HueRange{{MinHue: 100, MaxHue: 100, HueShift: 120}}},
+		{"nan min hue", []HueRange{{MinHue: float32(math.NaN()), MaxHue: 100, HueShift: 120}}},
+		{"inf max hue", []HueRange{{MinHue: 0, MaxHue: float32(math.Inf(1)), HueShift: 120}}},
+		{"nan hue shift", []HueRange{{MinHue: 0, MaxHue: 350, HueShift: float32(math.NaN())}}},
+		{"inf saturation shift", []HueRange{{MinHue: 0, MaxHue: 350, SaturationShift: float32(math.Inf(-1))}}},
+	}
+	for _, d := range testData {
+		g := New(SelectiveHue(d.ranges...))
+		dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+		g.Draw(dst, src)
+		for x := 0; x < 360; x++ {
+			if dist := hueDist(hueOf(dst, x, 0), float32(x)); dist > 2 {
+				t.Errorf("SelectiveHue [%s] changed hue at %d: got %v", d.desc, x, hueOf(dst, x, 0))
+			}
+		}
+	}
+
+	// a negative feather is treated as 0: full effect inside, none outside
+	g := New(SelectiveHue(
+		HueRange{MinHue: 200, MaxHue: 260, Feather: -10, HueShift: 120},
+	))
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+	if d := hueDist(hueOf(dst, 230, 0), 350); d > 2 {
+		t.Errorf("SelectiveHue [negative feather] bad hue inside the range: got %v", hueOf(dst, 230, 0))
+	}
+	if d := hueDist(hueOf(dst, 270, 0), 270); d > 2 {
+		t.Errorf("SelectiveHue [negative feather] changed hue outside the range: got %v", hueOf(dst, 270, 0))
+	}
+}
+
+func TestSelectiveHueChained(t *testing.T) {
+	src := makeHueWheel()
+	g := New(
+		SelectiveHue(HueRange{MinHue: 200, MaxHue: 260, Feather: 20, HueShift: 120}),
+		Saturation(10),
+	)
+	dst := image.NewNRGBA(g.Bounds(src.Bounds()))
+	g.Draw(dst, src)
+
+	if !dst.Bounds().Size().Eq(src.Bounds().Size()) {
+		t.Fatalf("SelectiveHue chained bad result size: expected %v got %v", src.Bounds().Size(), dst.Bounds().Size())
+	}
+	if d := hueDist(hueOf(dst, 230, 0), 350); d > 3 {
+		t.Errorf("SelectiveHue chained bad hue inside the range: got %v", hueOf(dst, 230, 0))
+	}
+}
